@@ -2,10 +2,238 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>KTP Site</title>
+<title>Учёт Показаний КТП</title>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f4f6f8; }
+  header { background: #2c3e50; color: white; padding: 15px 0; text-align: center; font-size: 1.8em; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+  .container { padding: 15px; max-width: 1200px; margin: auto; }
+  #months, #ktps { margin-bottom: 15px; }
+  button { padding: 8px 15px; margin-right: 5px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+  button:hover { opacity: 0.8; }
+  button.active { background: #3498db; color: white; }
+  label { font-weight: bold; margin-right: 10px; }
+  .btn { background: #27ae60; color: white; margin: 5px 5px 15px 0; border-radius: 5px; }
+  .btn:hover { background: #2ecc71; }
+  table { width: 100%; border-collapse: collapse; box-shadow: 0 2px 5px rgba(0,0,0,0.1); background: white; }
+  th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
+  th { background: #ecf0f1; font-weight: bold; position: sticky; top: 0; z-index: 1; }
+  tbody tr:hover { background: #f1f8ff; }
+  input, select { width: 90%; padding: 4px; border: 1px solid #ccc; border-radius: 3px; text-align: center; }
+  input[type="file"] { width: auto; }
+  select { background: white; }
+  #lossRow td { background: #f8d7da; color: #721c24; font-weight: bold; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
-<h1>Тест сайта KTP</h1>
-<p>Если это видно — GitHub Pages заработает!</p>
+<header>Учёт Показаний КТП</header>
+<div class="container">
+
+  <!-- Месяцы -->
+  <div id="months">
+    <button onclick="switchMonth('Сентябрь')" class="month-btn">Сентябрь</button>
+    <button onclick="switchMonth('Октябрь')" class="month-btn">Октябрь</button>
+    <button onclick="switchMonth('Ноябрь')" class="month-btn">Ноябрь</button>
+  </div>
+
+  <!-- Добавление КТП -->
+  <div>
+    <input type="text" id="newKtpName" placeholder="Название КТП">
+    <input type="text" id="newKtpFeeder" placeholder="Фидер КТП">
+    <button class="btn" onclick="addCustomKtp()">Добавить КТП</button>
+    <button class="btn" onclick="exportToExcel()">Скачать Excel</button>
+  </div>
+
+  <!-- Список КТП -->
+  <div id="ktps" style="margin-top:10px;"></div>
+
+  <!-- Полезный отпуск КТП -->
+  <label>Полезный отпуск КТП: <input id="ktpUseful" type="number" value="0" oninput="updateLossRow()"></label>
+  <button class="btn" onclick="addRow()">Добавить адрес</button>
+
+  <!-- Таблица -->
+  <table id="dataTable">
+    <thead>
+      <tr>
+        <th>Лицевой счёт</th>
+        <th>Адрес</th>
+        <th>Фидер</th>
+        <th>Начальные</th>
+        <th>Конечные</th>
+        <th>Разница</th>
+        <th>Примечание</th>
+        <th>Фото</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+</div>
+
+<script>
+let currentMonth = null;
+let currentKtp = null;
+const dataStore = {}; // { month: { ktpName: { feeder, records, ktpUseful } } }
+
+window.onload = () => {
+  const firstMonthBtn = document.querySelector('#months button');
+  if (firstMonthBtn) firstMonthBtn.click();
+};
+
+function switchMonth(month) {
+  saveCurrent();
+  currentMonth = month;
+  document.querySelectorAll('#months button').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+  currentKtp = null;
+  renderKtpButtons();
+  renderTable();
+}
+
+function renderKtpButtons() {
+  const ktpDiv = document.getElementById('ktps');
+  ktpDiv.innerHTML = '';
+  if (!dataStore[currentMonth]) dataStore[currentMonth] = {};
+  for (let ktp in dataStore[currentMonth]) {
+    const btn = document.createElement('button');
+    btn.textContent = ktp;
+    btn.classList.add('ktp-btn');
+    btn.onclick = () => { currentKtp = ktp; highlightKtpButton(btn); renderTable(); };
+    ktpDiv.appendChild(btn);
+    if (!currentKtp) { currentKtp = ktp; highlightKtpButton(btn); }
+  }
+}
+
+function highlightKtpButton(btn) {
+  document.querySelectorAll('#ktps button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function addCustomKtp() {
+  const name = document.getElementById('newKtpName').value.trim();
+  const feeder = document.getElementById('newKtpFeeder').value.trim();
+  if (!name || !feeder) return alert('Введите название и фидер!');
+  if (!dataStore[currentMonth]) dataStore[currentMonth]={};
+  dataStore[currentMonth][name] = { feeder, records: [], ktpUseful:0 };
+  renderKtpButtons();
+  currentKtp = name;
+  renderTable();
+  document.getElementById('newKtpName').value = '';
+  document.getElementById('newKtpFeeder').value = '';
+}
+
+function addRow(record = {}) {
+  if (!currentMonth || !currentKtp) return alert('Выберите месяц и КТП!');
+  const tbody = document.querySelector('#dataTable tbody');
+  const feederValue = dataStore[currentMonth][currentKtp]?.feeder || '';
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td><input value="${record.account||''}"></td>
+    <td><input value="${record.address||''}"></td>
+    <td><input value="${record.feeder||feederValue}"></td>
+    <td><input type="number" value="${record.start||0}"></td>
+    <td><input type="number" value="${record.end||0}"></td>
+    <td class="diff">${(record.end||0)-(record.start||0)}</td>
+    <td>
+      <select>
+        <option value="">-- выбрать --</option>
+        <option value="Нужна проверка">Нужна проверка</option>
+        <option value="Нет пломбы">Нет пломбы</option>
+        <option value="Не работает ПУ">Не работает ПУ</option>
+      </select>
+    </td>
+    <td>
+      <input type="file" accept="image/*">
+    </td>
+  `;
+  if (record.note) tr.children[6].firstElementChild.value = record.note;
+
+  tr.querySelectorAll('input[type=number]').forEach(input => {
+    input.addEventListener('input', () => {
+      const start = Number(tr.children[3].firstElementChild.value);
+      const end = Number(tr.children[4].firstElementChild.value);
+      tr.children[5].innerText = end - start;
+      updateLossRow();
+    });
+  });
+
+  tbody.appendChild(tr);
+  updateLossRow();
+}
+
+function updateLossRow() {
+  const tbody = document.querySelector('#dataTable tbody');
+  let lossRow = document.querySelector('#lossRow');
+  if (lossRow) lossRow.remove();
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  let totalDiff = 0;
+  rows.forEach(tr => { if(tr.id==='lossRow') return; totalDiff += Number(tr.children[5].innerText)||0; });
+
+  const ktpUseful = Number(document.getElementById('ktpUseful').value) || 0;
+  const losses = ktpUseful - totalDiff;
+
+  const tr = document.createElement('tr');
+  tr.id = 'lossRow';
+  tr.innerHTML = `<td colspan="4"><b>Потери КТП</b></td><td colspan="4"><b>${losses}</b></td>`;
+  tbody.appendChild(tr);
+}
+
+function saveCurrent() {
+  if (!currentMonth || !currentKtp) return;
+  const tbody = document.querySelector('#dataTable tbody');
+  const records = [];
+  tbody.querySelectorAll('tr').forEach(tr => {
+    if (tr.id==='lossRow') return;
+    records.push({
+      account: tr.children[0].firstElementChild.value,
+      address: tr.children[1].firstElementChild.value,
+      feeder: tr.children[2].firstElementChild.value,
+      start: Number(tr.children[3].firstElementChild.value),
+      end: Number(tr.children[4].firstElementChild.value),
+      note: tr.children[6].firstElementChild.value,
+      photo: tr.children[7].firstElementChild.files[0] || null
+    });
+  });
+  dataStore[currentMonth][currentKtp].records = records;
+  dataStore[currentMonth][currentKtp].ktpUseful = Number(document.getElementById('ktpUseful').value);
+}
+
+function renderTable() {
+  const tbody = document.querySelector('#dataTable tbody');
+  tbody.innerHTML = '';
+  if (!currentMonth || !currentKtp) return;
+  const data = dataStore[currentMonth][currentKtp];
+  document.getElementById('ktpUseful').value = data.ktpUseful || 0;
+  data.records.forEach(rec => addRow(rec));
+}
+
+function exportToExcel() {
+  if (!currentMonth || !currentKtp) return alert('Выберите месяц и КТП!');
+  const data = dataStore[currentMonth][currentKtp].records;
+  if (!data || data.length === 0) return alert('Нет данных для экспорта!');
+  const ws_data = [];
+  ws_data.push(["Лицевой счёт","Адрес","Фидер","Начальные","Конечные","Разница","Примечание","Фото"]);
+  data.forEach(rec => {
+    ws_data.push([
+      rec.account,
+      rec.address,
+      rec.feeder,
+      rec.start,
+      rec.end,
+      rec.end - rec.start,
+      rec.note,
+      rec.photo ? rec.photo.name : ""
+    ]);
+  });
+  const ktpUseful = dataStore[currentMonth][currentKtp].ktpUseful || 0;
+  let totalDiff = data.reduce((sum,r)=>sum+(r.end-r.start),0);
+  ws_data.push(["Потери КТП","", "", "", "", "", "", ktpUseful - totalDiff]);
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(ws_data);
+  XLSX.utils.book_append_sheet(wb, ws, `${currentKtp}-${currentMonth}`);
+  XLSX.writeFile(wb, `${currentKtp}-${currentMonth}.xlsx`);
+}
+</script>
 </body>
 </html>
